@@ -5,16 +5,17 @@ EAPI=6
 
 inherit eutils
 
+PACKAGE_VERSION="100"
+
 DESCRIPTION="Professional text and hex editing with Binary Templates technology"
 HOMEPAGE="https://www.sweetscape.com/010editor/"
 SRC_URI="
-	amd64? ( https://www.sweetscape.com/download/010EditorLinux64Installer.tar.gz -> ${P}-amd64.tar.gz )
-	x86? ( https://www.sweetscape.com/download/010EditorLinux32Installer.tar.gz -> ${P}-x86.tar.gz )"
+	amd64? ( https://download.sweetscape.com/010EditorLinux64Installer${PACKAGE_VERSION}.tar.gz -> ${P}-amd64.tar.gz )"
 RESTRICT="mirror strip bindist"
 
 LICENSE="sweetscape"
 SLOT="0"
-KEYWORDS="amd64 ~x86"
+KEYWORDS="amd64"
 IUSE=""
 
 DEPEND=""
