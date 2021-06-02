@@ -1,0 +1,11 @@
+prefix="%PREFIX%"
+exec_prefix="${prefix}"
+libdir="${prefix}/%LIB%"
+includedir="${prefix}/include"
+
+Name: libdatachannel
+Description: C/C++ WebRTC Data Channels and Media Transport lightweight library
+Version: %VERSION%
+Requires: 
+Cflags: -I"${includedir}"
+Libs: -L"${libdir}" -ldatachannel
