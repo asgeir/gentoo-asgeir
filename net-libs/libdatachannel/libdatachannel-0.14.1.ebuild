@@ -20,8 +20,8 @@ RDEPEND="${DEPEND}"
 BDEPEND=""
 
 PATCHES=(
-	"${FILESDIR}/patch-avoid-installing-plog-and-json.patch"
-	"${FILESDIR}/patch-lib64-install.patch"
+	"${FILESDIR}/${P}-avoid-installing-plog-and-json.patch"
+	"${FILESDIR}/${P}-lib64-install.patch"
 )
 
 src_install() {
