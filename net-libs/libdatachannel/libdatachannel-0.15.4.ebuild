@@ -22,6 +22,7 @@ BDEPEND=""
 PATCHES=(
 	"${FILESDIR}/${P}-avoid-installing-plog-and-json.patch"
 	"${FILESDIR}/${P}-lib64-install.patch"
+	"${FILESDIR}/${P}-video-orientation-support.patch"
 )
 
 src_install() {

@@ -1,0 +1,639 @@
+From 4b6aa3f1b790b717fcfd164b69857c6a446ab169 Mon Sep 17 00:00:00 2001
+From: Asgeir Bjarni Ingvarsson <asgeir@appdynamic.com>
+Date: Tue, 12 Oct 2021 14:35:14 +0000
+Subject: [PATCH 1/5] Adding basic current video orientation support
+
+---
+ include/rtc/description.hpp            | 19 ++++++++
+ include/rtc/rtp.hpp                    | 22 ++++++++++
+ include/rtc/rtppacketizationconfig.hpp | 23 +++++++++-
+ include/rtc/rtppacketizer.hpp          |  1 +
+ src/description.cpp                    | 61 +++++++++++++++++++++++++-
+ src/rtp.cpp                            | 58 +++++++++++++++++++++++-
+ src/rtppacketizationconfig.cpp         |  5 ++-
+ src/rtppacketizer.cpp                  | 23 +++++++++-
+ 8 files changed, 204 insertions(+), 8 deletions(-)
+
+diff --git a/include/rtc/description.hpp b/include/rtc/description.hpp
+index e8a94fea..162fceed 100644
+--- a/include/rtc/description.hpp
++++ b/include/rtc/description.hpp
+@@ -95,6 +95,24 @@ class RTC_CPP_EXPORT Description {
+ 		std::vector<string>::iterator endAttributes();
+ 		std::vector<string>::iterator removeAttribute(std::vector<string>::iterator iterator);
+ 
++		struct ExtMap {
++			ExtMap(string_view mline);
++			ExtMap() {}
++
++			int id;
++			string uri;
++			string attributes;
++
++			static int parseId(string_view view);
++			void setMLine(string_view view);
++		};
++
++		void addExtMap(const ExtMap &map);
++
++		std::map<int, ExtMap>::iterator beginExtMaps();
++		std::map<int, ExtMap>::iterator endExtMaps();
++		std::map<int, ExtMap>::iterator removeExtMap(std::map<int, ExtMap>::iterator iterator);
++
+ 	protected:
+ 		Entry(const string &mline, string mid, Direction dir = Direction::Unknown);
+ 		virtual string generateSdpLines(string_view eol) const;
+@@ -106,6 +124,7 @@ class RTC_CPP_EXPORT Description {
+ 		string mDescription;
+ 		string mMid;
+ 		Direction mDirection;
++		std::map<int, ExtMap> mExtMap;
+ 	};
+ 
+ 	struct RTC_CPP_EXPORT Application : public Entry {
+diff --git a/include/rtc/rtp.hpp b/include/rtc/rtp.hpp
+index de407672..87b9471f 100644
+--- a/include/rtc/rtp.hpp
++++ b/include/rtc/rtp.hpp
+@@ -31,6 +31,24 @@ typedef uint32_t SSRC;
+ 
+ #pragma pack(push, 1)
+ 
++struct RTC_CPP_EXPORT RTP_ExtensionHeader {
++	uint16_t _profileSpecificId;
++	uint16_t _headerLength;
++
++	[[nodiscard]] uint16_t profileSpecificId() const;
++	[[nodiscard]] uint16_t headerLength() const;
++
++	[[nodiscard]] size_t getSize() const;
++	[[nodiscard]] const char *getBody() const;
++	[[nodiscard]] char *getBody();
++
++	void setProfileSpecificId(uint16_t profileSpecificId);
++	void setHeaderLength(uint16_t headerLength);
++
++	void clearBody();
++	void writeCurrentVideoOrientation(size_t offset, uint8_t id, uint8_t value);
++};
++
+ struct RTC_CPP_EXPORT RTP {
+ 	uint8_t _first;
+ 	uint8_t _payloadType;
+@@ -50,6 +68,9 @@ struct RTC_CPP_EXPORT RTP {
+ 	[[nodiscard]] uint32_t ssrc() const;
+ 
+ 	[[nodiscard]] size_t getSize() const;
++	[[nodiscard]] size_t getExtSize() const;
++	[[nodiscard]] const RTP_ExtensionHeader *getExt() const;
++	[[nodiscard]] RTP_ExtensionHeader *getExt();
+ 	[[nodiscard]] const char *getBody() const;
+ 	[[nodiscard]] char *getBody();
+ 
+@@ -61,6 +82,7 @@ struct RTC_CPP_EXPORT RTP {
+ 	void setSsrc(uint32_t in_ssrc);
+ 	void setMarker(bool marker);
+ 	void setTimestamp(uint32_t i);
++	void setExtension(bool extension);
+ };
+ 
+ struct RTC_CPP_EXPORT RTCP_ReportBlock {
+diff --git a/include/rtc/rtppacketizationconfig.hpp b/include/rtc/rtppacketizationconfig.hpp
+index 4e96dd05..74992979 100644
+--- a/include/rtc/rtppacketizationconfig.hpp
++++ b/include/rtc/rtppacketizationconfig.hpp
+@@ -38,11 +38,31 @@ class RTC_CPP_EXPORT RtpPacketizationConfig {
+ 	const uint32_t clockRate;
+ 	const double &startTime_s = _startTime_s;
+ 	const uint32_t &startTimestamp = _startTimestamp;
++	const uint8_t videoOrientationId;
+ 
+ 	/// current sequence number
+ 	uint16_t sequenceNumber;
+ 	/// current timestamp
+ 	uint32_t timestamp;
++	/// Current video orientation
++	///
++	/// Bit#       7  6  5  4  3  2  1  0
++	/// Definition 0  0  0  0  C  F  R1 R0
++	///
++	/// C
++	///   0 - Front-facing camera (use this if unsure)
++	///   1 - Back-facing camera
++	///
++	/// F
++	///   0 - No Flip
++	///   1 - Horizontal flip
++	///
++	/// R1 R0 - CW rotation that receiver must apply
++	///   0 - 0 degrees
++	///   1 - 90 degrees
++	///   2 - 180 degrees
++	///   3 - 270 degrees
++	uint8_t videoOrientation = 0;
+ 
+ 	enum class EpochStart : unsigned long long {
+ 		T1970 = 2208988800, // number of seconds between 1970 and 1900
+@@ -67,7 +87,8 @@ class RTC_CPP_EXPORT RtpPacketizationConfig {
+ 	/// @param timestamp Initial timastamp of RTP packets (random number is choosed if nullopt)
+ 	RtpPacketizationConfig(SSRC ssrc, std::string cname, uint8_t payloadType, uint32_t clockRate,
+ 	                       optional<uint16_t> sequenceNumber = std::nullopt,
+-	                       optional<uint32_t> timestamp = std::nullopt);
++	                       optional<uint32_t> timestamp = std::nullopt,
++	                       uint8_t videoOrientationId = 0);
+ 
+ 	/// Convert timestamp to seconds
+ 	/// @param timestamp Timestamp
+diff --git a/include/rtc/rtppacketizer.hpp b/include/rtc/rtppacketizer.hpp
+index 96ffb47c..8cfe2980 100644
+--- a/include/rtc/rtppacketizer.hpp
++++ b/include/rtc/rtppacketizer.hpp
+@@ -29,6 +29,7 @@ namespace rtc {
+ /// Class responsible for RTP packetization
+ class RTC_CPP_EXPORT RtpPacketizer {
+ 	static const auto rtpHeaderSize = 12;
++	static const auto rtpExtHeaderCvoSize = 8;
+ 
+ public:
+ 	// RTP configuration
+diff --git a/src/description.cpp b/src/description.cpp
+index efa21969..fc1a1765 100644
+--- a/src/description.cpp
++++ b/src/description.cpp
+@@ -500,6 +500,15 @@ string Description::Entry::generateSdpLines(string_view eol) const {
+ 	sdp << "a=bundle-only" << eol;
+ 	sdp << "a=mid:" << mMid << eol;
+ 
++	for (auto it = mExtMap.begin(); it != mExtMap.end(); ++it) {
++		auto &map = it->second;
++
++		sdp << "a=extmap:" << map.id << ' ' << map.uri;
++		if (!map.attributes.empty())
++			sdp << ' ' << map.attributes;
++		sdp << eol;
++	}
++
+ 	switch (mDirection) {
+ 	case Direction::SendOnly:
+ 		sdp << "a=sendonly" << eol;
+@@ -533,7 +542,15 @@ void Description::Entry::parseSdpLine(string_view line) {
+ 
+ 		if (key == "mid")
+ 			mMid = value;
+-		else if (attr == "sendonly")
++		else if (key == "extmap") {
++			auto id = Description::Media::ExtMap::parseId(value);
++			auto it = mExtMap.find(id);
++			if (it == mExtMap.end()) {
++				it = mExtMap.insert(std::make_pair(id, Description::Media::ExtMap(value))).first;
++			} else {
++				it->second.setMLine(value);
++			}
++		} else if (attr == "sendonly")
+ 			mDirection = Direction::SendOnly;
+ 		else if (attr == "recvonly")
+ 			mDirection = Direction::RecvOnly;
+@@ -557,6 +574,48 @@ Description::Entry::removeAttribute(std::vector<string>::iterator it) {
+ 	return mAttributes.erase(it);
+ }
+ 
++void Description::Entry::addExtMap(const Description::Entry::ExtMap &map) {
++	mExtMap.emplace(map.id, map);
++}
++
++std::map<int, Description::Entry::ExtMap>::iterator Description::Entry::beginExtMaps() {
++	return mExtMap.begin();
++}
++
++std::map<int, Description::Entry::ExtMap>::iterator Description::Entry::endExtMaps() {
++	return mExtMap.end();
++}
++
++std::map<int, Description::Entry::ExtMap>::iterator
++Description::Entry::removeExtMap(std::map<int, Description::Entry::ExtMap>::iterator iterator) {
++	return mExtMap.erase(iterator);
++}
++
++Description::Entry::ExtMap::ExtMap(string_view mline) { setMLine(mline); }
++
++int Description::Entry::ExtMap::parseId(string_view view) {
++	size_t p = view.find(' ');
++
++	return to_integer<int>(view.substr(0, p));
++}
++
++void Description::Entry::ExtMap::setMLine(string_view mline) {
++	size_t p = mline.find(' ');
++	if (p == string::npos)
++		throw std::invalid_argument("Invalid m-line");
++
++	this->id = to_integer<int>(mline.substr(0, p));
++	string_view line = mline.substr(p + 1);
++
++	size_t spl = line.find(' ');
++	if (spl == string::npos)
++		this->uri = line;
++	else {
++		this->uri = line.substr(0, spl);
++		this->attributes = line.substr(spl + 1);
++	}
++}
++
+ void Description::Media::addSSRC(uint32_t ssrc, optional<string> name, optional<string> msid,
+                                  optional<string> trackID) {
+ 	if (name) {
+diff --git a/src/rtp.cpp b/src/rtp.cpp
+index f0e98e1e..ecc083d0 100644
+--- a/src/rtp.cpp
++++ b/src/rtp.cpp
+@@ -56,11 +56,35 @@ size_t RTP::getSize() const {
+ 	       sizeof(SSRC) * csrcCount();
+ }
+ 
++size_t RTP::getExtSize() const {
++	auto header = reinterpret_cast<const RTP_ExtensionHeader *>(getExt());
++	if (header) {
++		return header->getSize() + sizeof(RTP_ExtensionHeader);
++	}
++	return 0;
++}
++
++const RTP_ExtensionHeader *RTP::getExt() const {
++	if (extension()) {
++		auto header = reinterpret_cast<const char *>(&_csrc) + sizeof(SSRC) * csrcCount();
++		return reinterpret_cast<const RTP_ExtensionHeader *>(header);
++	}
++	return nullptr;
++}
++
++RTP_ExtensionHeader *RTP::getExt() {
++	if (extension()) {
++		auto header = reinterpret_cast<char *>(&_csrc) + sizeof(SSRC) * csrcCount();
++		return reinterpret_cast<RTP_ExtensionHeader *>(header);
++	}
++	return nullptr;
++}
++
+ const char *RTP::getBody() const {
+-	return reinterpret_cast<const char *>(&_csrc) + sizeof(SSRC) * csrcCount();
++	return reinterpret_cast<const char *>(&_csrc) + sizeof(SSRC) * csrcCount() + getExtSize();
+ }
+ 
+-char *RTP::getBody() { return reinterpret_cast<char *>(&_csrc) + sizeof(SSRC) * csrcCount(); }
++char *RTP::getBody() { return reinterpret_cast<char *>(&_csrc) + sizeof(SSRC) * csrcCount() + getExtSize(); }
+ 
+ void RTP::preparePacket() { _first |= (1 << 7); }
+ 
+@@ -76,6 +100,8 @@ void RTP::setMarker(bool marker) { _payloadType = (_payloadType & 0x7F) | (marke
+ 
+ void RTP::setTimestamp(uint32_t i) { _timestamp = htonl(i); }
+ 
++void RTP::setExtension(bool extension) { _first = (_first & ~0x10) | ((extension & 1) << 4); }
++
+ void RTP::log() const {
+ 	PLOG_VERBOSE << "RTP V: " << (int)version() << " P: " << (padding() ? "P" : " ")
+ 	             << " X: " << (extension() ? "X" : " ") << " CC: " << (int)csrcCount()
+@@ -83,6 +109,34 @@ void RTP::log() const {
+ 	             << " SEQNO: " << seqNumber() << " TS: " << timestamp();
+ }
+ 
++uint16_t RTP_ExtensionHeader::profileSpecificId() const { return ntohs(_profileSpecificId); }
++
++uint16_t RTP_ExtensionHeader::headerLength() const { return ntohs(_headerLength); }
++
++size_t RTP_ExtensionHeader::getSize() const { return headerLength() * 4; }
++
++const char *RTP_ExtensionHeader::getBody() const { return reinterpret_cast<const char *>((&_headerLength) + 1); }
++
++char *RTP_ExtensionHeader::getBody() { return reinterpret_cast<char *>((&_headerLength) + 1); }
++
++void RTP_ExtensionHeader::setProfileSpecificId(uint16_t profileSpecificId) {
++	_profileSpecificId = htons(profileSpecificId);
++}
++
++void RTP_ExtensionHeader::setHeaderLength(uint16_t headerLength) {
++	_headerLength = htons(headerLength);
++}
++
++void RTP_ExtensionHeader::clearBody() { std::memset(getBody(), 0, getSize()); }
++
++void RTP_ExtensionHeader::writeCurrentVideoOrientation(size_t offset, uint8_t id, uint8_t value)
++{
++	if ((id == 0) || (id > 14) || ((offset + 2) > getSize())) return;
++	auto buf = getBody() + offset;
++	buf[0] = id << 4;
++	buf[1] = value;
++}
++
+ SSRC RTCP_ReportBlock::getSSRC() const { return ntohl(_ssrc); }
+ 
+ void RTCP_ReportBlock::preparePacket(SSRC in_ssrc, [[maybe_unused]] unsigned int packetsLost,
+diff --git a/src/rtppacketizationconfig.cpp b/src/rtppacketizationconfig.cpp
+index b8cd2b02..84d9c6fd 100644
+--- a/src/rtppacketizationconfig.cpp
++++ b/src/rtppacketizationconfig.cpp
+@@ -27,8 +27,9 @@ namespace rtc {
+ RtpPacketizationConfig::RtpPacketizationConfig(SSRC ssrc, string cname, uint8_t payloadType,
+                                                uint32_t clockRate,
+                                                optional<uint16_t> sequenceNumber,
+-                                               optional<uint32_t> timestamp)
+-    : ssrc(ssrc), cname(cname), payloadType(payloadType), clockRate(clockRate) {
++                                               optional<uint32_t> timestamp,
++                                               uint8_t videoOrientationId)
++    : ssrc(ssrc), cname(cname), payloadType(payloadType), clockRate(clockRate), videoOrientationId(videoOrientationId) {
+ 	assert(clockRate > 0);
+ 	srand((unsigned)time(NULL));
+ 	if (sequenceNumber.has_value()) {
+diff --git a/src/rtppacketizer.cpp b/src/rtppacketizer.cpp
+index d1a065c9..03a735d3 100644
+--- a/src/rtppacketizer.cpp
++++ b/src/rtppacketizer.cpp
+@@ -27,7 +27,16 @@ namespace rtc {
+ RtpPacketizer::RtpPacketizer(shared_ptr<RtpPacketizationConfig> rtpConfig) : rtpConfig(rtpConfig) {}
+ 
+ binary_ptr RtpPacketizer::packetize(shared_ptr<binary> payload, bool setMark) {
+-	auto msg = std::make_shared<binary>(rtpHeaderSize + payload->size());
++	int rtpExtHeaderSize = 0;
++	const bool setVideoRotation =
++		(rtpConfig->videoOrientationId != 0) &&
++		(rtpConfig->videoOrientationId < 15) &&  // needs fixing if longer extension headers are supported
++		setMark &&
++		(rtpConfig->videoOrientation != 0);
++	if (setVideoRotation) {
++		rtpExtHeaderSize = rtpExtHeaderCvoSize;
++	}
++	auto msg = std::make_shared<binary>(rtpHeaderSize + rtpExtHeaderSize + payload->size());
+ 	auto *rtp = (RTP *)msg->data();
+ 	rtp->setPayloadType(rtpConfig->payloadType);
+ 	// increase sequence number
+@@ -37,8 +46,18 @@ binary_ptr RtpPacketizer::packetize(shared_ptr<binary> payload, bool setMark) {
+ 	if (setMark) {
+ 		rtp->setMarker(true);
+ 	}
++	if (rtpExtHeaderSize) {
++		rtp->setExtension(true);
++
++		auto extHeader = rtp->getExt();
++		extHeader->setProfileSpecificId(0xbede);
++		extHeader->setHeaderLength(1);
++		extHeader->clearBody();
++		extHeader->writeCurrentVideoOrientation(0,
++			rtpConfig->videoOrientationId, rtpConfig->videoOrientation);
++	}
+ 	rtp->preparePacket();
+-	std::memcpy(msg->data() + rtpHeaderSize, payload->data(), payload->size());
++	std::memcpy(msg->data() + rtpHeaderSize + rtpExtHeaderSize, payload->data(), payload->size());
+ 	return msg;
+ }
+ 
+
+From 261f1d9e255bad1b42e6848bd264182d3761ddbb Mon Sep 17 00:00:00 2001
+From: Asgeir Bjarni Ingvarsson <asgeir@appdynamic.com>
+Date: Wed, 13 Oct 2021 09:57:08 +0000
+Subject: [PATCH 2/5] Rename ExtMap mline to description and properly parse it
+
+---
+ include/rtc/description.hpp |  3 ++-
+ src/description.cpp         | 45 ++++++++++++++++++++++++++-----------
+ 2 files changed, 34 insertions(+), 14 deletions(-)
+
+diff --git a/include/rtc/description.hpp b/include/rtc/description.hpp
+index 162fceed..0db06597 100644
+--- a/include/rtc/description.hpp
++++ b/include/rtc/description.hpp
+@@ -102,9 +102,10 @@ class RTC_CPP_EXPORT Description {
+ 			int id;
+ 			string uri;
+ 			string attributes;
++			Direction direction = Direction::Unknown;
+ 
+ 			static int parseId(string_view view);
+-			void setMLine(string_view view);
++			void setDescription(string_view view);
+ 		};
+ 
+ 		void addExtMap(const ExtMap &map);
+diff --git a/src/description.cpp b/src/description.cpp
+index fc1a1765..420f694a 100644
+--- a/src/description.cpp
++++ b/src/description.cpp
+@@ -548,7 +548,7 @@ void Description::Entry::parseSdpLine(string_view line) {
+ 			if (it == mExtMap.end()) {
+ 				it = mExtMap.insert(std::make_pair(id, Description::Media::ExtMap(value))).first;
+ 			} else {
+-				it->second.setMLine(value);
++				it->second.setDescription(value);
+ 			}
+ 		} else if (attr == "sendonly")
+ 			mDirection = Direction::SendOnly;
+@@ -591,7 +591,7 @@ Description::Entry::removeExtMap(std::map<int, Description::Entry::ExtMap>::iter
+ 	return mExtMap.erase(iterator);
+ }
+ 
+-Description::Entry::ExtMap::ExtMap(string_view mline) { setMLine(mline); }
++Description::Entry::ExtMap::ExtMap(string_view description) { setDescription(description); }
+ 
+ int Description::Entry::ExtMap::parseId(string_view view) {
+ 	size_t p = view.find(' ');
+@@ -599,20 +599,39 @@ int Description::Entry::ExtMap::parseId(string_view view) {
+ 	return to_integer<int>(view.substr(0, p));
+ }
+ 
+-void Description::Entry::ExtMap::setMLine(string_view mline) {
+-	size_t p = mline.find(' ');
+-	if (p == string::npos)
+-		throw std::invalid_argument("Invalid m-line");
++void Description::Entry::ExtMap::setDescription(string_view description) {
++	const size_t uriStart = description.find(' ');
++	if (uriStart == string::npos)
++		throw std::invalid_argument("Invalid description");
+ 
+-	this->id = to_integer<int>(mline.substr(0, p));
+-	string_view line = mline.substr(p + 1);
++	const string_view idAndDirection = description.substr(0, uriStart);
++	const size_t idSplit = idAndDirection.find('/');
++	if (idSplit == string::npos) {
++		this->id = to_integer<int>(idAndDirection);
++	} else {
++		this->id = to_integer<int>(idAndDirection.substr(0, idSplit));
++
++		const string_view directionStr = idAndDirection.substr(idSplit + 1);
++		if (directionStr == "sendonly")
++			this->direction = Direction::SendOnly;
++		else if (directionStr == "recvonly")
++			this->direction = Direction::RecvOnly;
++		else if (directionStr == "sendrecv")
++			this->direction = Direction::SendRecv;
++		else if (directionStr == "inactive")
++			this->direction = Direction::Inactive;
++		else
++			throw std::invalid_argument("Invalid direction");
++	}
+ 
+-	size_t spl = line.find(' ');
+-	if (spl == string::npos)
+-		this->uri = line;
++	const string_view uriAndAttributes = description.substr(uriStart + 1);
++	const size_t attributeSplit = uriAndAttributes.find(' ');
++
++	if (attributeSplit == string::npos)
++		this->uri = uriAndAttributes;
+ 	else {
+-		this->uri = line.substr(0, spl);
+-		this->attributes = line.substr(spl + 1);
++		this->uri = uriAndAttributes.substr(0, attributeSplit);
++		this->attributes = uriAndAttributes.substr(attributeSplit + 1);
+ 	}
+ }
+ 
+
+From e64a0ef09019cf144d8b7ae3f902799547212ab5 Mon Sep 17 00:00:00 2001
+From: Asgeir Bjarni Ingvarsson <asgeir@appdynamic.com>
+Date: Wed, 13 Oct 2021 09:59:23 +0000
+Subject: [PATCH 3/5] Rename getExt* to getExtensionHeader*
+
+---
+ include/rtc/rtp.hpp   |  6 +++---
+ src/rtp.cpp           | 12 ++++++------
+ src/rtppacketizer.cpp |  2 +-
+ 3 files changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/include/rtc/rtp.hpp b/include/rtc/rtp.hpp
+index 87b9471f..25e3b5ae 100644
+--- a/include/rtc/rtp.hpp
++++ b/include/rtc/rtp.hpp
+@@ -68,9 +68,9 @@ struct RTC_CPP_EXPORT RTP {
+ 	[[nodiscard]] uint32_t ssrc() const;
+ 
+ 	[[nodiscard]] size_t getSize() const;
+-	[[nodiscard]] size_t getExtSize() const;
+-	[[nodiscard]] const RTP_ExtensionHeader *getExt() const;
+-	[[nodiscard]] RTP_ExtensionHeader *getExt();
++	[[nodiscard]] size_t getExtensionHeaderSize() const;
++	[[nodiscard]] const RTP_ExtensionHeader *getExtensionHeader() const;
++	[[nodiscard]] RTP_ExtensionHeader *getExtensionHeader();
+ 	[[nodiscard]] const char *getBody() const;
+ 	[[nodiscard]] char *getBody();
+ 
+diff --git a/src/rtp.cpp b/src/rtp.cpp
+index ecc083d0..d5454803 100644
+--- a/src/rtp.cpp
++++ b/src/rtp.cpp
+@@ -56,15 +56,15 @@ size_t RTP::getSize() const {
+ 	       sizeof(SSRC) * csrcCount();
+ }
+ 
+-size_t RTP::getExtSize() const {
+-	auto header = reinterpret_cast<const RTP_ExtensionHeader *>(getExt());
++size_t RTP::getExtensionHeaderSize() const {
++	auto header = reinterpret_cast<const RTP_ExtensionHeader *>(getExtensionHeader());
+ 	if (header) {
+ 		return header->getSize() + sizeof(RTP_ExtensionHeader);
+ 	}
+ 	return 0;
+ }
+ 
+-const RTP_ExtensionHeader *RTP::getExt() const {
++const RTP_ExtensionHeader *RTP::getExtensionHeader() const {
+ 	if (extension()) {
+ 		auto header = reinterpret_cast<const char *>(&_csrc) + sizeof(SSRC) * csrcCount();
+ 		return reinterpret_cast<const RTP_ExtensionHeader *>(header);
+@@ -72,7 +72,7 @@ const RTP_ExtensionHeader *RTP::getExt() const {
+ 	return nullptr;
+ }
+ 
+-RTP_ExtensionHeader *RTP::getExt() {
++RTP_ExtensionHeader *RTP::getExtensionHeader() {
+ 	if (extension()) {
+ 		auto header = reinterpret_cast<char *>(&_csrc) + sizeof(SSRC) * csrcCount();
+ 		return reinterpret_cast<RTP_ExtensionHeader *>(header);
+@@ -81,10 +81,10 @@ RTP_ExtensionHeader *RTP::getExt() {
+ }
+ 
+ const char *RTP::getBody() const {
+-	return reinterpret_cast<const char *>(&_csrc) + sizeof(SSRC) * csrcCount() + getExtSize();
++	return reinterpret_cast<const char *>(&_csrc) + sizeof(SSRC) * csrcCount() + getExtensionHeaderSize();
+ }
+ 
+-char *RTP::getBody() { return reinterpret_cast<char *>(&_csrc) + sizeof(SSRC) * csrcCount() + getExtSize(); }
++char *RTP::getBody() { return reinterpret_cast<char *>(&_csrc) + sizeof(SSRC) * csrcCount() + getExtensionHeaderSize(); }
+ 
+ void RTP::preparePacket() { _first |= (1 << 7); }
+ 
+diff --git a/src/rtppacketizer.cpp b/src/rtppacketizer.cpp
+index 03a735d3..7bec01b0 100644
+--- a/src/rtppacketizer.cpp
++++ b/src/rtppacketizer.cpp
+@@ -49,7 +49,7 @@ binary_ptr RtpPacketizer::packetize(shared_ptr<binary> payload, bool setMark) {
+ 	if (rtpExtHeaderSize) {
+ 		rtp->setExtension(true);
+ 
+-		auto extHeader = rtp->getExt();
++		auto extHeader = rtp->getExtensionHeader();
+ 		extHeader->setProfileSpecificId(0xbede);
+ 		extHeader->setHeaderLength(1);
+ 		extHeader->clearBody();
+
+From 42bec1212936728910dd237611155b5a2f47c5a6 Mon Sep 17 00:00:00 2001
+From: Asgeir Bjarni Ingvarsson <asgeir@appdynamic.com>
+Date: Wed, 13 Oct 2021 10:09:28 +0000
+Subject: [PATCH 4/5] Correctly serialize ExtMap direction to SDP
+
+---
+ src/description.cpp | 20 +++++++++++++++++++-
+ 1 file changed, 19 insertions(+), 1 deletion(-)
+
+diff --git a/src/description.cpp b/src/description.cpp
+index 420f694a..05ede0af 100644
+--- a/src/description.cpp
++++ b/src/description.cpp
+@@ -503,7 +503,25 @@ string Description::Entry::generateSdpLines(string_view eol) const {
+ 	for (auto it = mExtMap.begin(); it != mExtMap.end(); ++it) {
+ 		auto &map = it->second;
+ 
+-		sdp << "a=extmap:" << map.id << ' ' << map.uri;
++		sdp << "a=extmap:" << map.id;
++		switch (map.direction) {
++		case Direction::SendOnly:
++			sdp << "/sendonly";
++			break;
++		case Direction::RecvOnly:
++			sdp << "/recvonly";
++			break;
++		case Direction::SendRecv:
++			sdp << "/sendrecv";
++			break;
++		case Direction::Inactive:
++			sdp << "/inactive";
++			break;
++		default:
++			// Ignore
++			break;
++		}
++		sdp << ' ' << map.uri;
+ 		if (!map.attributes.empty())
+ 			sdp << ' ' << map.attributes;
+ 		sdp << eol;
+
+From e456db53240052e28db02befefd26d545e88045d Mon Sep 17 00:00:00 2001
+From: Asgeir Bjarni Ingvarsson <asgeir@appdynamic.com>
+Date: Thu, 14 Oct 2021 08:55:47 +0000
+Subject: [PATCH 5/5] Fixed missing parameter rename
+
+---
+ include/rtc/description.hpp | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/rtc/description.hpp b/include/rtc/description.hpp
+index 0db06597..ea2cde2f 100644
+--- a/include/rtc/description.hpp
++++ b/include/rtc/description.hpp
+@@ -96,7 +96,7 @@ class RTC_CPP_EXPORT Description {
+ 		std::vector<string>::iterator removeAttribute(std::vector<string>::iterator iterator);
+ 
+ 		struct ExtMap {
+-			ExtMap(string_view mline);
++			ExtMap(string_view description);
+ 			ExtMap() {}
+ 
+ 			int id;
