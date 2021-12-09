@@ -1,10 +1,10 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 1a6434e..f4e546f 100644
+index c0e59d1..b63e5fb 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -367,8 +367,8 @@ endif()
+@@ -387,8 +387,8 @@ endif()
  
- install(TARGETS datachannel EXPORT libdatachannel-config
+ install(TARGETS datachannel EXPORT LibDataChannelTargets
  	RUNTIME DESTINATION bin
 -	LIBRARY DESTINATION lib
 -	ARCHIVE DESTINATION lib

@@ -1,15 +1,3 @@
-diff -urN a/deps/json/CMakeLists.txt b/deps/json/CMakeLists.txt
---- a/deps/json/CMakeLists.txt	2021-08-05 14:55:14.110432271 +0000
-+++ b/deps/json/CMakeLists.txt	2021-08-05 14:57:52.771003626 +0000
-@@ -16,7 +16,7 @@
- ## OPTIONS
- ##
- option(JSON_BuildTests "Build the unit tests when BUILD_TESTING is enabled." ON)
--option(JSON_Install "Install CMake targets during install step." ON)
-+option(JSON_Install "Install CMake targets during install step." OFF)
- option(JSON_MultipleHeaders "Use non-amalgamated version of the library." OFF)
- 
- ##
 diff -urN a/deps/plog/CMakeLists.txt b/deps/plog/CMakeLists.txt
 --- a/deps/plog/CMakeLists.txt	2021-08-05 14:55:14.940435259 +0000
 +++ b/deps/plog/CMakeLists.txt	2021-08-05 14:57:52.771003626 +0000
