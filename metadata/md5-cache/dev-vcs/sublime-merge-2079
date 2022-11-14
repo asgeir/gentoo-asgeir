@@ -1,0 +1,13 @@
+DEFINED_PHASES=install postinst postrm
+DESCRIPTION=A new Git client, from the makers of Sublime Text
+EAPI=6
+HOMEPAGE=https://www.sublimemerge.com
+INHERIT=desktop gnome2-utils
+KEYWORDS=amd64
+LICENSE=Sublime
+RDEPEND=dev-libs/glib:2 x11-libs/gtk+:2 x11-libs/libX11
+RESTRICT=bindist mirror strip
+SLOT=0
+SRC_URI=amd64? ( https://download.sublimetext.com/sublime_merge_build_2079_x64.tar.xz )
+_eclasses_=desktop	7eb20ad915a0a318176d51bc2508ff5c	toolchain-funcs	441f754fd75cd4fd1fa06fbc17da6144	multilib	5ca4e49abed8e3a2f7b56920eadee157	xdg-utils	ac0e315a3688929e34ac75b139e7349a	gnome2-utils	2116cec8f46f4d1b0a88c5b1f1575dd3
+_md5_=597cb8de4e2b579b2cde1ea5c5fa4385
