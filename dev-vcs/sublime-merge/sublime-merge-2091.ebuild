@@ -29,7 +29,7 @@ src_install() {
 	doins changelog.txt
 
 	exeinto /opt/${PN}${PV}
-	doexe crash_reporter git-credential-sublime ssh-askpass-sublime sublime_merge
+	doexe crash_handler git-credential-sublime ssh-askpass-sublime sublime_merge
 	dosym ../../opt/${PN}${PV}/sublime_merge /usr/bin/smerge
 
 	local size

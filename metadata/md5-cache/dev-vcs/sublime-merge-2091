@@ -10,4 +10,4 @@ RESTRICT=bindist mirror strip
 SLOT=0
 SRC_URI=amd64? ( https://download.sublimetext.com/sublime_merge_build_2091_x64.tar.xz )
 _eclasses_=desktop	021728fdc1b03b36357dbc89489e0f0d	toolchain-funcs	862d337d98edb576796827be2c6b11ca	multilib	c19072c3cd7ac5cb21de013f7e9832e0	xdg-utils	baea6080dd821f5562d715887954c9d3	gnome2-utils	b0183db3b2e07b18f3b77bffec72e116
-_md5_=597cb8de4e2b579b2cde1ea5c5fa4385
+_md5_=f9327bed3f998e8e98bb76e8d020d971
